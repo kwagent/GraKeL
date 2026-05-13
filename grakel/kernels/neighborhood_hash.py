@@ -569,5 +569,6 @@ def nh_compare_labels(Gx, Gy):
             a += 1
         else:
             b += 1
-
-    return c/float(nv_x+nv_y-c)
+            
+    denom = float(nv_x + nv_y - c)
+    return c / denom if denom != 0 else 1.0
