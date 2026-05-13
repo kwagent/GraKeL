@@ -1099,7 +1099,7 @@ class Graph(object):
 
         """
         if purpose not in ["adjacency", "dictionary", "any"]:
-            raise ValueError('purpose is either "adjacency" of "dictionary"')
+            raise ValueError('purpose is either "adjacency" or "dictionary"')
 
         if purpose == "any":
             if self._format in ['all', 'adjacency']:
@@ -1129,9 +1129,12 @@ class Graph(object):
             Returns a list of tuples for edges.
 
         """
-        if purpose not in ["adjacency", "dictionary"]:
-            raise ValueError('purpose is either "adjacency" of "dictionary"')
-
+        if purpose not in ["adjacency", "dictionary", "any"]:
+            raise ValueError('purpose is either "adjacency" or "dictionary"')
+            
+        if purpose == "any":
+            purpose = "adjacency" if self._format in ['all', 'adjacency'] else "dictionary"
+            
         if purpose == "adjacency":
             self.desired_format("adjacency", warn=True)
             idx_i, idx_j = np.where(self.adjacency_matrix > 0)
