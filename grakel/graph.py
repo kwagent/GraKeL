@@ -1201,7 +1201,13 @@ class Graph(object):
                 edge_dictionary[i][j] = self.adjacency_matrix[i, j]
             return edge_dictionary
         else:
-            return self.edge_dictionary
+            ed = self.edge_dictionary
+            # Normalize adjacency-list style (dict-of-lists) to dict-of-dicts
+            if ed and isinstance(next(iter(ed.values())), list):
+                return {v: {u: 1. for u in neighbors} for v, neighbors in ed.items()}
+            return ed
+
+
 
     def nv(self):
         """Get the number of vertices for any existing format.
