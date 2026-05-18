@@ -1202,6 +1202,8 @@ class Graph(object):
             return edge_dictionary
         else:
             ed = self.edge_dictionary
+            if not isinstance(ed, dict):
+                return ed
             # Normalize adjacency-list style (dict-of-lists) to dict-of-dicts
             if ed and isinstance(next(iter(ed.values())), list):
                 return {v: {u: 1. for u in neighbors} for v, neighbors in ed.items()}
