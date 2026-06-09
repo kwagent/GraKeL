@@ -116,7 +116,7 @@ class NeighborhoodSubgraphPairwiseDistance(Kernel):
             ng = 0
 
             # Holds all the data for combinations of r, d
-            data = defaultdict(dict)
+            data = defaultdict(lambda: defaultdict(int))
 
             # Index all keys for combinations of r, d
             all_keys = defaultdict(dict)
@@ -179,7 +179,7 @@ class NeighborhoodSubgraphPairwiseDistance(Kernel):
                                 if idx is None:
                                     idx = len(keys)
                                     keys[key] = idx
-                                data[r, d][ng, idx] = data[r, d].get((ng, idx), 0) + 1
+                                data[r, d][ng, idx] += 1
 
                 elif self._method_calling == 3:
                     for d in filterfalse(lambda x: x not in D,
@@ -196,7 +196,7 @@ class NeighborhoodSubgraphPairwiseDistance(Kernel):
                                     if idx is None:
                                         idx = len(keys) + len(fit_keys)
                                         keys[key] = idx
-                                data[r, d][ng, idx] = data[r, d].get((ng, idx), 0) + 1
+                                data[r, d][ng, idx] += 1
                 ng += 1
             if ng == 0:
                 raise ValueError('parsed input is empty')
