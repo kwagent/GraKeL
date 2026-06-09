@@ -419,9 +419,9 @@ class WeisfeilerLehmanOptimalAssignment(Kernel):
                 for j in range(self._nx):
                     K[i, j] = np.sum(Hs[i, :self.X.shape[1]].minimum(self.X[j, :]))
         else:
+            X_test = Hs[:, :self.X.shape[1]]
             for i in range(nx):
-                for j in range(self._nx):
-                    K[i, j] = np.sum(np.min([Hs[i, :self.X.shape[1]], self.X[j, :]], axis=0))
+                K[i, :] = np.sum(np.minimum(X_test[i, :], self.X), axis=1)
 
         self._is_transformed = True
         if self.normalize:
