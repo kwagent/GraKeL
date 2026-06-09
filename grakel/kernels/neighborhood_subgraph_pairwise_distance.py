@@ -390,7 +390,7 @@ class NeighborhoodSubgraphPairwiseDistance(Kernel):
                 re = {(i, j) for (i, j) in re
                       if i in sub_vertices and j in sub_vertices}
                 lv = {v: lv[v] for v in sub_vertices}
-                le = {e: le[e] for e in edges}
+                le = {e: le[e] for e in re}
                 H[radius, v] = hash_graph(D_pair, sub_vertices, re, lv, le)
         return H
 
