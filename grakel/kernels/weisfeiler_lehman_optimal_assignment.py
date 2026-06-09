@@ -276,9 +276,8 @@ class WeisfeilerLehmanOptimalAssignment(Kernel):
                     K[j, i] = K[i, j]
         else:
             for i in range(self._nx):
-                for j in range(i, self._nx):
-                    K[i, j] = np.sum(np.min(self.X[np.ix_([i, j]), :], axis=1))
-                    K[j, i] = K[i, j]
+                K[i, i:] = np.sum(np.minimum(self.X[i:, :], self.X[i, :]), axis=1)
+            K = np.triu(K) + np.triu(K, 1).T
 
         self._X_diag = np.diagonal(K)
         if self.normalize:
