@@ -416,8 +416,8 @@ class WeisfeilerLehmanOptimalAssignment(Kernel):
         # Compute the histogram intersection kernel
         K = np.zeros((nx, self._nx))
         if self.sparse:
-            for i in range(self._nx):
-                for j in range(i, self._nx):
+            for i in range(nx):
+                for j in range(self._nx):
                     K[i, j] = np.sum(Hs[i, :self.X.shape[1]].minimum(self.X[j, :]))
         else:
             for i in range(nx):
