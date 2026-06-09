@@ -4,6 +4,7 @@
 import warnings
 
 import numpy as np
+import joblib
 
 from sklearn.exceptions import NotFittedError
 from sklearn.utils.validation import check_is_fitted
@@ -274,11 +275,18 @@ class WeisfeilerLehmanOptimalAssignment(Kernel):
                 for j in range(i, self._nx):
                     K[i, j] = np.sum(self.X[i, :].minimum(self.X[j, :]))
                     K[j, i] = K[i, j]
-        else:
+        elif self._parallel is None:
             for i in range(self._nx):
-                for j in range(i, self._nx):
-                    K[i, j] = np.sum(np.min(self.X[np.ix_([i, j]), :], axis=1))
-                    K[j, i] = K[i, j]
+                K[i, i:] = _histogram_intersection_fit_row(self.X, i)
+        else:
+            rows = self._parallel(
+                joblib.delayed(_histogram_intersection_fit_row)(self.X, i)
+                for i in range(self._nx)
+            )
+            for i, row in enumerate(rows):
+                K[i, i:] = row
+        if not self.sparse:
+            K = np.triu(K) + np.triu(K, 1).T
 
         self._X_diag = np.diagonal(K)
         if self.normalize:
@@ -420,9 +428,17 @@ class WeisfeilerLehmanOptimalAssignment(Kernel):
                 for j in range(self._nx):
                     K[i, j] = np.sum(Hs[i, :self.X.shape[1]].minimum(self.X[j, :]))
         else:
-            for i in range(nx):
-                for j in range(self._nx):
-                    K[i, j] = np.sum(np.min([Hs[i, :self.X.shape[1]], self.X[j, :]], axis=0))
+            X_test = Hs[:, :self.X.shape[1]]
+            if self._parallel is None:
+                for i in range(nx):
+                    K[i, :] = _histogram_intersection_transform_row(X_test[i, :], self.X)
+            else:
+                rows = self._parallel(
+                    joblib.delayed(_histogram_intersection_transform_row)(X_test[i, :], self.X)
+                    for i in range(nx)
+                )
+                for i, row in enumerate(rows):
+                    K[i, :] = row
 
         self._is_transformed = True
         if self.normalize:
@@ -459,29 +475,36 @@ class WeisfeilerLehmanOptimalAssignment(Kernel):
         try:
             check_is_fitted(self, ['_X_diag'])
             if self._is_transformed:
-                Y_diag = np.zeros(self.Y.shape[0])
-                for i in range(self.Y.shape[0]):
-                    Y_diag[i] = np.sum(np.min(self.Y[np.ix_([i, i]), :], axis=1))
+                Y_diag = np.sum(self.Y, axis=1)
         except NotFittedError:
             # Calculate diagonal of X
             if self._is_transformed:
-                self._X_diag = np.zeros(self.X.shape[0])
-                for i in range(self.X.shape[0]):
-                    self._X_diag[i] = np.sum(np.min(self.X[np.ix_([i, i]), :], axis=1))
-
-                Y_diag = np.zeros(self.Y.shape[0])
-                for i in range(self.Y.shape[0]):
-                    Y_diag[i] = np.sum(np.min(self.Y[np.ix_([i, i]), :], axis=1))
+                self._X_diag = np.sum(self.X, axis=1)
+                Y_diag = np.sum(self.Y, axis=1)
             else:
                 # case sub kernel is only fitted
-                self._X_diag = np.zeros(self.X.shape[0])
-                for i in range(self.X.shape[0]):
-                    self._X_diag[i] = np.sum(np.min(self.X[np.ix_([i, i]), :], axis=1))
+                self._X_diag = np.sum(self.X, axis=1)
 
         if self._is_transformed:
             return self._X_diag, Y_diag
         else:
             return self._X_diag
+
+
+def _histogram_intersection_fit_row(H, i):
+    """Return upper-triangular row i of the histogram intersection kernel matrix.
+
+    Computes K[i, i:] = sum_v min(H[i,v], H[j,v]) for all j >= i.
+    """
+    return np.sum(np.minimum(H[i:, :], H[i, :]), axis=1)
+
+
+def _histogram_intersection_transform_row(h_test_i, H_train):
+    """Return the histogram intersection between one test and all training histograms.
+
+    Computes K[i, :] = sum_v min(h_test_i[v], H_train[j,v]) for all j.
+    """
+    return np.sum(np.minimum(h_test_i, H_train), axis=1)
 
 
 def efit(object, data):
