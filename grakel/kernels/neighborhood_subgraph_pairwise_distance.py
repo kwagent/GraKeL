@@ -335,10 +335,12 @@ class NeighborhoodSubgraphPairwiseDistance(Kernel):
         Returns
         -------
         X_diag : int
-            Always equal with r*d.
+            Number of non-empty (r, d) feature levels in the fitted dataset,
+            at most (r+1)*(d+1).
 
         Y_diag : int
-            Always equal with r*d.
+            Number of non-empty (r, d) feature levels in the transformed
+            dataset.  Only present after a call to `transform`.
 
         """
         # constant based on normalization of krd
