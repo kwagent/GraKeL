@@ -424,21 +424,22 @@ def hash_graph(D, vertices, edges, glv, gle):
         The hash value for the given graph.
 
     """
-    encoding = ""
-
     # Make labels for vertices
     Lv = dict()
+    vertex_parts = []
     for i in vertices:
         label = "|".join(sorted([str(D[(i, j)]) + ',' + str(glv[j])
                                  for j in vertices if (i, j) in D]))
-        encoding += label + "."
+        vertex_parts.append(label + ".")
         Lv[i] = label
 
-    encoding = encoding[:-1]+":"
+    # Build edge encoding using a list accumulator, then join once.
+    # This avoids O(n^2) string copies that would occur with repeated +=.
+    edge_parts = [Lv[i] + ',' + Lv[j] + ',' + str(gle[(i, j)]) + "_"
+                  for (i, j) in edges]
 
-    # Expand to labels for edges
-    for (i, j) in edges:
-        encoding += Lv[i] + ',' + Lv[j] + ',' + str(gle[(i, j)]) + "_"
+    encoding = (("".join(vertex_parts)[:-1] if vertex_parts else "") + ":"
+                + "".join(edge_parts))
 
     # Arash Partov hashing, as in the original
     # implementation of NSPK.
