@@ -458,24 +458,15 @@ class WeisfeilerLehmanOptimalAssignment(Kernel):
         try:
             check_is_fitted(self, ['_X_diag'])
             if self._is_transformed:
-                Y_diag = np.zeros(self.Y.shape[0])
-                for i in range(self.Y.shape[0]):
-                    Y_diag[i] = np.sum(np.min(self.Y[np.ix_([i, i]), :], axis=1))
+                Y_diag = np.sum(self.Y, axis=1)
         except NotFittedError:
             # Calculate diagonal of X
             if self._is_transformed:
-                self._X_diag = np.zeros(self.X.shape[0])
-                for i in range(self.X.shape[0]):
-                    self._X_diag[i] = np.sum(np.min(self.X[np.ix_([i, i]), :], axis=1))
-
-                Y_diag = np.zeros(self.Y.shape[0])
-                for i in range(self.Y.shape[0]):
-                    Y_diag[i] = np.sum(np.min(self.Y[np.ix_([i, i]), :], axis=1))
+                self._X_diag = np.sum(self.X, axis=1)
+                Y_diag = np.sum(self.Y, axis=1)
             else:
                 # case sub kernel is only fitted
-                self._X_diag = np.zeros(self.X.shape[0])
-                for i in range(self.X.shape[0]):
-                    self._X_diag[i] = np.sum(np.min(self.X[np.ix_([i, i]), :], axis=1))
+                self._X_diag = np.sum(self.X, axis=1)
 
         if self._is_transformed:
             return self._X_diag, Y_diag
