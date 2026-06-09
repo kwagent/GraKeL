@@ -4,6 +4,7 @@
 import warnings
 from collections import defaultdict
 
+import joblib
 import numpy as np
 
 from scipy.sparse import csr_matrix
@@ -72,8 +73,18 @@ class NeighborhoodSubgraphPairwiseDistance(Kernel):
     def initialize(self):
         """Initialize all transformer arguments, needing initialization."""
         if not self._initialized["n_jobs"]:
-            if self.n_jobs is not None:
-                warnings.warn('no implemented parallelization for NeighborhoodSubgraphPairwiseDistance')
+            if type(self.n_jobs) is not int and self.n_jobs is not None:
+                raise ValueError('n_jobs parameter must be an int '
+                                 'indicating the number of jobs as in joblib or None')
+            elif self.n_jobs is None:
+                self._parallel = None
+            else:
+                # Use a process-based backend so per-graph hashing bypasses
+                # the GIL and achieves real CPU parallelism.
+                self._parallel = joblib.Parallel(n_jobs=self.n_jobs,
+                                                 backend="loky",
+                                                 pre_dispatch='all')
+                self._n_jobs = self._parallel._effective_n_jobs()
             self._initialized["n_jobs"] = True
 
         if not self._initialized["r"]:
@@ -111,124 +122,100 @@ class NeighborhoodSubgraphPairwiseDistance(Kernel):
         """
         if not isinstance(X, Iterable):
             raise TypeError('input must be an iterable\n')
-        else:
-            # Hold the number of graphs
-            ng = 0
 
-            # Holds all the data for combinations of r, d
-            data = defaultdict(lambda: defaultdict(int))
-
-            # Index all keys for combinations of r, d
-            all_keys = defaultdict(dict)
-            for (idx, x) in enumerate(iter(X)):
-                is_iter = False
-                if isinstance(x, Iterable):
-                    is_iter, x = True, list(x)
-                if is_iter and len(x) in [0, 3]:
-                    if len(x) == 0:
-                        warnings.warn('Ignoring empty element' +
-                                      ' on index: '+str(idx))
-                        continue
-                    else:
-                        g = Graph(x[0], x[1], x[2])
-                        g.change_format("adjacency")
-                elif type(x) is Graph:
-                    g = Graph(x.get_adjacency_matrix(),
-                              x.get_labels(purpose="adjacency", label_type="vertex"),
-                              x.get_labels(purpose="adjacency", label_type="edge"))
+        # Phase 1 (serial): validate inputs and collect Graph-ready entries.
+        graph_entries = []
+        for (idx, x) in enumerate(iter(X)):
+            is_iter = False
+            if isinstance(x, Iterable):
+                is_iter, x = True, list(x)
+            if is_iter and len(x) in [0, 3]:
+                if len(x) == 0:
+                    warnings.warn('Ignoring empty element' +
+                                  ' on index: ' + str(idx))
+                    continue
                 else:
-                    raise TypeError('each element of X must have either ' +
-                                    'a graph with labels for node and edge ' +
-                                    'or 3 elements consisting of a graph ' +
-                                    'type object, labels for vertices and ' +
-                                    'labels for edges.')
+                    graph_entries.append(('tuple', x))
+            elif type(x) is Graph:
+                graph_entries.append(('graph', x))
+            else:
+                raise TypeError('each element of X must have either ' +
+                                'a graph with labels for node and edge ' +
+                                'or 3 elements consisting of a graph ' +
+                                'type object, labels for vertices and ' +
+                                'labels for edges.')
 
-                # Bring to the desired format
-                g.change_format(self._graph_format)
+        ng = len(graph_entries)
+        if ng == 0:
+            raise ValueError('parsed input is empty')
 
-                # Take the vertices
-                vertices = set(g.get_vertices(purpose=self._graph_format))
+        # Phase 2: extract features — parallel when self._parallel is set.
+        # _extract_graph_hashes is a module-level function so it can be
+        # pickled for the loky (process-based) parallel backend.
+        if self._parallel is not None:
+            all_graph_features = self._parallel(
+                joblib.delayed(_extract_graph_hashes)(
+                    entry, self.r, self.d, self._graph_format)
+                for entry in graph_entries
+            )
+        else:
+            all_graph_features = [
+                _extract_graph_hashes(entry, self.r, self.d, self._graph_format)
+                for entry in graph_entries
+            ]
 
-                # Extract the dicitionary
-                ed = g.get_edge_dictionary()
+        # Phase 3 (serial): enumerate global feature keys and accumulate counts.
+        data = defaultdict(lambda: defaultdict(int))
+        all_keys = defaultdict(dict)
 
-                # Convert edges to tuples
-                edges = {(j, k) for j in ed.keys() for k in ed[j].keys()}
-
-                # Extract labels for nodes
-                Lv = g.get_labels(purpose=self._graph_format)
-                # and for edges
-                Le = g.get_labels(purpose=self._graph_format, label_type="edge")
-
-                # Produce all the neighborhoods and the distance pairs
-                # up to the desired radius and maximum distance
-                N, D, D_pair = g.produce_neighborhoods(self.r, purpose="dictionary",
-                                                       with_distances=True, d=self.d)
-
-                # Hash all the neighborhoods
-                H = self._hash_neighborhoods(vertices, edges, Lv, Le, N, D_pair)
-
-                if self._method_calling == 1:
-                    for d in filterfalse(lambda x: x not in D,
-                                         range(self.d+1)):
-                        for (A, B) in D[d]:
-                            for r in range(self.r+1):
-                                key = (H[r, A], H[r, B])
-                                keys = all_keys[r, d]
-                                idx = keys.get(key, None)
-                                if idx is None:
-                                    idx = len(keys)
-                                    keys[key] = idx
-                                data[r, d][ng, idx] += 1
-
-                elif self._method_calling == 3:
-                    for d in filterfalse(lambda x: x not in D,
-                                         range(self.d+1)):
-                        for (A, B) in D[d]:
-                            # Based on the edges of the bidirected graph
-                            for r in range(self.r+1):
-                                keys = all_keys[r, d]
-                                fit_keys = self._fit_keys[r, d]
-                                key = (H[r, A], H[r, B])
-                                idx = fit_keys.get(key, None)
-                                if idx is None:
-                                    idx = keys.get(key, None)
-                                    if idx is None:
-                                        idx = len(keys) + len(fit_keys)
-                                        keys[key] = idx
-                                data[r, d][ng, idx] += 1
-                ng += 1
-            if ng == 0:
-                raise ValueError('parsed input is empty')
-
+        for ng_idx, graph_features in enumerate(all_graph_features):
             if self._method_calling == 1:
-                # A feature matrix for all levels
-                M = dict()
-
-                for (key, d) in filterfalse(lambda a: len(a[1]) == 0,
-                                            iteritems(data)):
-                    indexes, data = zip(*iteritems(d))
-                    rows, cols = zip(*indexes)
-                    M[key] = csr_matrix((data, (rows, cols)), shape=(ng, len(all_keys[key])),
-                                        dtype=np.int64)
-                self._fit_keys = all_keys
-                self._ngx = ng
-
+                for (rd_key, pair_counts) in graph_features.items():
+                    keys = all_keys[rd_key]
+                    for hash_pair, count in pair_counts.items():
+                        idx = keys.get(hash_pair, None)
+                        if idx is None:
+                            idx = len(keys)
+                            keys[hash_pair] = idx
+                        data[rd_key][ng_idx, idx] += count
             elif self._method_calling == 3:
-                # A feature matrix for all levels
-                M = dict()
+                for (rd_key, pair_counts) in graph_features.items():
+                    keys = all_keys[rd_key]
+                    fit_keys = self._fit_keys[rd_key]
+                    for hash_pair, count in pair_counts.items():
+                        idx = fit_keys.get(hash_pair, None)
+                        if idx is None:
+                            idx = keys.get(hash_pair, None)
+                            if idx is None:
+                                idx = len(keys) + len(fit_keys)
+                                keys[hash_pair] = idx
+                        data[rd_key][ng_idx, idx] += count
 
-                for (key, d) in filterfalse(lambda a: len(a[1]) == 0,
-                                            iteritems(data)):
-                    indexes, data = zip(*iteritems(d))
-                    rows, cols = zip(*indexes)
-                    M[key] = csr_matrix((data, (rows, cols)),
-                                        shape=(ng, len(all_keys[key]) + len(self._fit_keys[key])),
-                                        dtype=np.int64)
+        # Phase 4 (serial): build sparse feature matrices.
+        if self._method_calling == 1:
+            M = dict()
+            for (key, d) in filterfalse(lambda a: len(a[1]) == 0,
+                                        iteritems(data)):
+                indexes, values = zip(*iteritems(d))
+                rows, cols = zip(*indexes)
+                M[key] = csr_matrix((values, (rows, cols)),
+                                    shape=(ng, len(all_keys[key])),
+                                    dtype=np.int64)
+            self._fit_keys = all_keys
+            self._ngx = ng
 
-                self._ngy = ng
+        elif self._method_calling == 3:
+            M = dict()
+            for (key, d) in filterfalse(lambda a: len(a[1]) == 0,
+                                        iteritems(data)):
+                indexes, values = zip(*iteritems(d))
+                rows, cols = zip(*indexes)
+                M[key] = csr_matrix((values, (rows, cols)),
+                                    shape=(ng, len(all_keys[key]) + len(self._fit_keys[key])),
+                                    dtype=np.int64)
+            self._ngy = ng
 
-            return M
+        return M
 
     def transform(self, X, y=None):
         """Calculate the kernel matrix, between given and fitted dataset.
@@ -356,43 +343,101 @@ class NeighborhoodSubgraphPairwiseDistance(Kernel):
             return self._X_diag
 
     def _hash_neighborhoods(self, vertices, edges, Lv, Le, N, D_pair):
-        """Hash all neighborhoods and all root nodes.
+        """Hash all neighborhoods and all root nodes (thin wrapper)."""
+        return _compute_neighborhood_hashes(
+            vertices, edges, Lv, Le, N, D_pair, self.r)
 
-        Parameters
-        ----------
-        vertices : set
-            The graph vertices.
 
-        edges : set
-            The set of edges
+def _compute_neighborhood_hashes(vertices, edges, Lv, Le, N, D_pair, r_max):
+    """Hash all (radius, vertex) neighborhood subgraphs of one graph.
 
-        N : dict
-            Neighborhoods that map levels (int) to dictionaries of root node
-            symbols (keys) to list of vertex symbols, which correspond to the
-            neighbors, that belong to this neighborhood.
+    Module-level so it can be pickled for process-based parallel dispatch.
 
-        D_pairs : dict
-            A dictionary that maps edges (tuple pairs of vertex symbols) to
-            element distances (int - as produced from a BFS traversal).
+    Parameters
+    ----------
+    vertices : set
+        The graph vertices.
+    edges : set
+        All edges of the graph (used as the starting set at radius r_max).
+    Lv : dict
+        Vertex labels.
+    Le : dict
+        Edge labels.
+    N : dict
+        Neighborhoods: N[radius][v] is the list of vertices within `radius`
+        hops of v.
+    D_pair : dict
+        Pairwise distances: D_pair[(u, v)] = shortest-path distance.
+    r_max : int
+        Maximum radius.
 
-        Returns
-        -------
-        H : dict
-            The hashed neighborhoods as a 2-level dict from radious,
-            vertex to the hashed values.
+    Returns
+    -------
+    H : dict
+        Maps (radius, vertex) → hash integer.
+    """
+    H, sel = dict(), sorted(list(edges))
+    for v in vertices:
+        re, lv, le = sel, Lv, Le
+        for radius in range(r_max, -1, -1):
+            sub_vertices = sorted(N[radius][v])
+            re = {(i, j) for (i, j) in re
+                  if i in sub_vertices and j in sub_vertices}
+            lv = {vv: lv[vv] for vv in sub_vertices}
+            le = {e: le[e] for e in re}
+            H[radius, v] = hash_graph(D_pair, sub_vertices, re, lv, le)
+    return H
 
-        """
-        H, sel = dict(), sorted(list(edges))
-        for v in vertices:
-            re, lv, le = sel, Lv, Le
-            for radius in range(self.r, -1, -1):
-                sub_vertices = sorted(N[radius][v])
-                re = {(i, j) for (i, j) in re
-                      if i in sub_vertices and j in sub_vertices}
-                lv = {v: lv[v] for v in sub_vertices}
-                le = {e: le[e] for e in edges}
-                H[radius, v] = hash_graph(D_pair, sub_vertices, re, lv, le)
-        return H
+
+def _extract_graph_hashes(entry, r_max, d_max, graph_format):
+    """Parse one graph and return its (r,d) → {hash_pair: count} features.
+
+    Module-level (picklable) for joblib loky / multiprocessing backends.
+    Each call is fully independent and dominates the runtime of parse_input,
+    making it the right unit of work for parallelisation.
+
+    Parameters
+    ----------
+    entry : tuple
+        ('tuple', [adj, vlabels, elabels]) or ('graph', Graph).
+    r_max, d_max : int
+        Kernel radius and distance bounds.
+    graph_format : str
+        Internal graph representation format.
+
+    Returns
+    -------
+    features : dict
+        Maps (r_val, d_val) → {(hash_A, hash_B): count}.
+    """
+    kind, raw = entry
+    if kind == 'tuple':
+        g = Graph(raw[0], raw[1], raw[2])
+        g.change_format("adjacency")
+    else:
+        g = Graph(raw.get_adjacency_matrix(),
+                  raw.get_labels(purpose="adjacency", label_type="vertex"),
+                  raw.get_labels(purpose="adjacency", label_type="edge"))
+    g.change_format(graph_format)
+    vertices = set(g.get_vertices(purpose=graph_format))
+    ed = g.get_edge_dictionary()
+    edges = {(j, k) for j in ed.keys() for k in ed[j].keys()}
+    Lv = g.get_labels(purpose=graph_format)
+    Le = g.get_labels(purpose=graph_format, label_type="edge")
+    N, D, D_pair = g.produce_neighborhoods(r_max, purpose="dictionary",
+                                           with_distances=True, d=d_max)
+    H = _compute_neighborhood_hashes(vertices, edges, Lv, Le, N, D_pair, r_max)
+    features = {}
+    for d_val in range(d_max + 1):
+        if d_val not in D:
+            continue
+        for (A, B) in D[d_val]:
+            for r_val in range(r_max + 1):
+                rd_key = (r_val, d_val)
+                hp = (H[r_val, A], H[r_val, B])
+                level = features.setdefault(rd_key, {})
+                level[hp] = level.get(hp, 0) + 1
+    return features
 
 
 def hash_graph(D, vertices, edges, glv, gle):
