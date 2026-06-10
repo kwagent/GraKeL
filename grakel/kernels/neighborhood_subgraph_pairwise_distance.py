@@ -207,9 +207,9 @@ class NeighborhoodSubgraphPairwiseDistance(Kernel):
 
                 for (key, d) in filterfalse(lambda a: len(a[1]) == 0,
                                             iteritems(data)):
-                    indexes, data = zip(*iteritems(d))
+                    indexes, values = zip(*iteritems(d))
                     rows, cols = zip(*indexes)
-                    M[key] = csr_matrix((data, (rows, cols)), shape=(ng, len(all_keys[key])),
+                    M[key] = csr_matrix((values, (rows, cols)), shape=(ng, len(all_keys[key])),
                                         dtype=np.int64)
                 self._fit_keys = all_keys
                 self._ngx = ng
@@ -220,9 +220,9 @@ class NeighborhoodSubgraphPairwiseDistance(Kernel):
 
                 for (key, d) in filterfalse(lambda a: len(a[1]) == 0,
                                             iteritems(data)):
-                    indexes, data = zip(*iteritems(d))
+                    indexes, values = zip(*iteritems(d))
                     rows, cols = zip(*indexes)
-                    M[key] = csr_matrix((data, (rows, cols)),
+                    M[key] = csr_matrix((values, (rows, cols)),
                                         shape=(ng, len(all_keys[key]) + len(self._fit_keys[key])),
                                         dtype=np.int64)
 
@@ -335,10 +335,12 @@ class NeighborhoodSubgraphPairwiseDistance(Kernel):
         Returns
         -------
         X_diag : int
-            Always equal with r*d.
+            Number of non-empty (r, d) feature levels in the fitted dataset,
+            at most (r+1)*(d+1).
 
         Y_diag : int
-            Always equal with r*d.
+            Number of non-empty (r, d) feature levels in the transformed
+            dataset.  Only present after a call to `transform`.
 
         """
         # constant based on normalization of krd
@@ -390,7 +392,7 @@ class NeighborhoodSubgraphPairwiseDistance(Kernel):
                 re = {(i, j) for (i, j) in re
                       if i in sub_vertices and j in sub_vertices}
                 lv = {v: lv[v] for v in sub_vertices}
-                le = {e: le[e] for e in edges}
+                le = {e: le[e] for e in re}
                 H[radius, v] = hash_graph(D_pair, sub_vertices, re, lv, le)
         return H
 
